@@ -1,0 +1,330 @@
+/**
+ *
+ * GDMigrate for Google Apps Script
+ *
+ * 2012 KLab Inc.
+ *
+ * This software is provided "as is" without any express and implied warranty
+ * of any kind. The entire risk of the quality and performance of this software
+ * with you, and you shall use this software your own sole judgment and
+ * responsibility. KLab shall not undertake responsibility or liability for
+ * any and all damages resulting from your use of this software.
+ * KLab does not warrant this software to be free from bug or error in
+ * programming and other defect or fit for a particular purpose, and KLab does
+ * not warrant the completeness, accuracy and reliability and other warranty
+ * of any kind with respect to result of your use of this software.
+ * KLab shall not be obligated to support, update or upgrade this software. 
+ * 
+ */
+
+var NAME_APP = "GDMigrate";
+var NAME_SHARED_FOLDER = "GDMIGRATE_SHARED_FOLDER";
+var ROLE_SHARER = 0;
+var ROLE_RECEIVER = 1;
+var FOLDER_SHARED_FOLDER = null;
+var NAME_CURRENT_USER = "";
+var NAME_RECEIVER = "";
+
+// エントリーポイント
+function main() {
+  NAME_CURRENT_USER = Session.getUser().getEmail();
+  UserProperties.setProperty("cancel", 0);
+  var sheet = SpreadsheetApp.getActiveSheet();
+  sheet.clearContents().setColumnWidth(1, 2000);
+  
+  var choice = Browser.msgBox("ボタン押下で処理を選択して下さい",
+                           "[はい]＝共有用コピーの提供　　　" +
+                           "[いいえ]＝共有用コピーの取得　　　" +
+                           "[キャンセル]＝終了", 
+                           Browser.Buttons.YES_NO_CANCEL);
+  if (choice == "cancel") {
+    return;
+  }
+  if (choice == "yes") {
+    if (checkGDMigrateSharedFolder(0) != null) {
+      Browser.msgBox(NAME_APP, "予約名のフォルダ [/" + NAME_SHARED_FOLDER + 
+                   "] があなたの Google Drive 上にすでに存在します。このフォルダを削除してから実行して下さい。",
+                   Browser.Buttons.OK);
+      doClose(0);
+      return;
+    }
+    NAME_RECEIVER = "";
+    while (NAME_RECEIVER == "") {
+      NAME_RECEIVER = Browser.inputBox("アカウントの指定", "移行先アカウントを指定して下さい", 
+                                    Browser.Buttons.OK);
+    }
+    showGui(ROLE_SHARER);
+  }  else {
+    FOLDER_SHARED_FOLDER = checkGDMigrateSharedFolder(1);
+    if (FOLDER_SHARED_FOLDER == null) {
+      Browser.msgBox(NAME_APP, "他のアカウントからあなたへ共有中の [/" + NAME_SHARED_FOLDER + 
+                   "] フォルダが見つかりません。所定のアカウントで「共有用コピーの提供」を行ってから実行して下さい。",
+                   Browser.Buttons.OK);
+      doClose(0);
+      return;
+    }
+    showGui(ROLE_RECEIVER);
+  }
+}
+
+// "GDMIGRATE_SHARED_FOLDER" の存在チェック
+// role: ROLE_SHARER = 共有提供側  ROLE_RECEIVER = 被共有側
+function checkGDMigrateSharedFolder(role) {
+  var folders;
+  var root = DocsList.getRootFolder();
+  if (role == ROLE_SHARER) {
+    folders = root.getFolders();
+  } else if (role == ROLE_RECEIVER) {
+    folders = DocsList.getFolders();
+  } else {
+    return null;
+  }
+  for (var i = 0; i < folders.length; i++) {
+    var curFolder = folders[i];
+    // "GDMIGRATE_SHARED_FOLDER" の存在をチェック
+    if (curFolder.getName() == NAME_SHARED_FOLDER) {
+      // 共有側：ルート直下に自分がオーナーの当該フォルダあり
+      if (role == 0 && curFolder.getOwner() == NAME_CURRENT_USER) {
+        return curFolder;
+      }
+      // 被共有側：自分が非オーナーかつ親フォルダのない当該フォルダあり
+      if (role == 1 && curFolder.getOwner() != NAME_CURRENT_USER) {
+        if (curFolder.getParents().length == 0) {
+          return curFolder;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// GUI 表示～処理開始
+function showGui(role) {
+  var title;
+  if (role == ROLE_SHARER) {
+    title = "共有用コピーを作成中";
+  } else if (role == ROLE_RECEIVER) {
+    title = "被共有文書を取り込み中";  
+  } else {
+    Browser.msgBox(NAME_APP, "モードに誤りがあります", Browser.Buttons.OK);
+    return;
+  }
+  
+  // 中途キャンセル用の UI を作成
+  var sheet = SpreadsheetApp.getActiveSpreadsheet();
+  var app = UiApp.createApplication().setTitle(title).setHeight(40).setWidth(100);
+  var btn = app.createButton('中止').setId("btnCancel").setWidth('80').setTag("tagtag");
+  var pnl = app.createVerticalPanel();
+
+  // ボタン Down/Up ハンドラ
+  var handlerServer = app.createServerClickHandler('onButtonDown');
+  var handlerClient = app.createClientHandler().forEventSource().setEnabled(false);
+  btn.addMouseDownHandler(handlerServer);
+  btn.addMouseUpHandler(handlerClient);
+  
+  // UI 表示
+  pnl.add(btn);
+  app.add(pnl);
+  sheet.show(app);
+  
+  if (role == ROLE_SHARER) {
+    startSharer();
+  } else if (role == ROLE_RECEIVER) {
+    startReceiver();
+  }
+}
+
+// 共有提供側の処理
+function startSharer() {
+  showToast("処理を開始します", "共有用コピーの提供", 5);
+  var app = UiApp.getActiveApplication();
+  var root = DocsList.getRootFolder();
+  // Google Drive ルート直下に GDMIGRATE_SHARED_FOLDER/ を作成
+  FOLDER_SHARED_FOLDER = root.createFolder(NAME_SHARED_FOLDER);
+  // 移行先アカウントを同フォルダの共同編集者として追加
+  FOLDER_SHARED_FOLDER.addEditor(NAME_RECEIVER);
+  var targetSharedFolder = FOLDER_SHARED_FOLDER;
+  duplicateFiles(root, targetSharedFolder, 0);
+  doClose(1);
+}
+
+// 被共有側の処理
+function startReceiver() {
+  showToast("処理を開始します", "被共有文書の取り込み", 5);
+  var app = UiApp.getActiveApplication();
+  var root = DocsList.getRootFolder();
+  var newFolderName = getDateTimeStr("", "", "_");
+  var newFolder = root.createFolder(newFolderName);
+  duplicateFiles(FOLDER_SHARED_FOLDER, newFolder, 1);
+  doClose(1);
+}
+
+// 文書・フォルダと ACL の再帰コピー
+function duplicateFiles(srcFolder, dstFolder, role) {
+  var cnt, retry = 2;
+  // 1. 文書の処理
+  var files = srcFolder.getFiles();
+  for (var i = 0; i < files.length; i++) {
+    if (queryCancelled() == 1) {
+      putLog("duplicateFiles: cancelled by user");
+      return -1;
+    }
+    var curFile = files[i];
+    // 共有提供側なら自分がオーナーの文書のみ対象
+    if (role == ROLE_SHARER && curFile.getOwner() != NAME_CURRENT_USER) {
+      continue;
+    }
+    // 以下手順に注意
+    // ・makeCopy() は必ず引数使用版を使う
+    // ・root から remove してから フォルダA へ add する
+    // 他の手順ではフォルダA の ACL がコピーに反映されない
+    cnt = 0;
+    while (1) {
+      try {
+        putLog("duplicateFiles: copy doc [" + curFile.getName() +"]");
+        var dupFile = curFile.makeCopy(curFile.getName());
+        putLog("duplicateFiles: copy ACL [" + curFile.getName() +"]");
+        copyAcl(curFile, dupFile, role);
+        putLog("duplicateFiles: move folder [" + curFile.getName() + "]");
+        dupFile.removeFromFolder(DocsList.getRootFolder());
+        dupFile.addToFolder(dstFolder);
+        putLog("duplicateFiles: done [" + curFile.getName() + "]");
+        break;
+      } catch (e) {
+        putLog("duplicateFiles: " + e.name + ":" + e.message);
+        if (cnt++ > retry) {
+          putLog("duplicateFiles: retry over.. [" + curFile.getName() + "]");
+          break;
+        }
+        putLog("duplicateFiles: retrying..");
+        Utilities.sleep(1000);
+      }
+    }
+  }
+  // 2. フォルダの処理
+  var folders = srcFolder.getFolders();
+  for (var i = 0; i < folders.length; i++) {
+    if (queryCancelled() == 1) {
+      putLog("duplicateFiles: cancelled by user");
+      return -1;
+    }
+    var curFolder = folders[i];
+    // 作成した共有用フォルダ自身を対象としないように
+    if (role == ROLE_SHARER && curFolder.getId() == FOLDER_SHARED_FOLDER.getId()) {
+      continue;
+    }
+    cnt = 0;
+    while (1) {
+      try {
+        putLog("duplicateFiles: create folder [" + curFolder.getName() + "]");
+        var dupFolder = dstFolder.createFolder(curFolder.getName());
+        putLog("duplicateFiles: copy ACL [" + curFolder.getName() + "]");
+        copyAcl(curFolder, dupFolder, role);
+        var ret = duplicateFiles(curFolder, dupFolder);
+        if (ret != 0) {
+          return ret;
+        }
+        break;
+      } catch (e) {
+        putLog("duplicateFiles: " + e.name + ":" + e.message);
+        if (cnt++ > retry) {
+          putLog("duplicateFiles: retry over.. [" + curFolder.getName() + "]");
+          break;
+        }
+        putLog("duplicateFiles: retrying..");
+        Utilities.sleep(1000);
+      }
+    }
+  }
+  return 0;
+}
+
+// src の ACL を dst へ反映
+function copyAcl(src, dst, role) {
+  var ownerOld = src.getOwner();
+  var viewers = src.getViewers();
+  var editors = src.getEditors();
+
+  // 共有提供側の処理  
+  if (role == ROLE_SHARER) {
+    dst.addViewers(viewers);
+    dst.addEditors(editors);
+    return;
+  }
+  // 以下、被共有側の処理
+  for (var i = 0; i < viewers.length; i++) {
+    var vr = viewers[i];
+    var newid = vr.getEmail();
+    if (newid != NAME_CURRENT_USER && newid != ownerOld) {
+      try {
+        dst.addViewer(newid);
+      } catch (e) {
+        putLog("copyAcl: viewer [" + newid + "] is skipped");
+      }
+    }
+  }
+  for (var i = 0; i < editors.length; i++) {
+    var ed = editors[i];
+    var newid = ed.getEmail();
+    if (newid != NAME_CURRENT_USER && newid != ownerOld) {
+      try {
+        dst.addEditor(newid);
+      } catch (e) {
+        putLog("copyAcl: editor [" + newid + "] is skipped");
+      }
+    }
+  }
+}
+
+function doClose(mode) {
+  if (mode == 0) {
+    return;
+  }
+  showToast("完了", "", 1);
+  Browser.msgBox(NAME_APP, "処理を終了しました", Browser.Buttons.OK);  
+  var app = UiApp.getActiveApplication();
+  app.close();
+  return app;
+}
+
+function queryCancelled() {
+  return UserProperties.getProperty("cancel");
+}
+
+function onButtonDown() {
+  // イベントハンドラからは変数参照不可につきユーザプロパティを使用
+  UserProperties.setProperty("cancel", 1);
+}
+
+function getDateTimeStr(dateDelimiter, timeDelimiter, dateTimeConnector) {
+  var DD = dateDelimiter;
+  var TD = timeDelimiter;
+  var DTC = dateTimeConnector;
+  var date = new Date();
+  var y = date.getFullYear();
+  var m = date.getMonth() + 1
+  var d = date.getDate();
+  var h = date.getHours();
+  var mn = date.getMinutes() ;
+  var s = date.getSeconds();
+  var dt = y + DD + ((m > 9) ? m : "0" + m) + DD + ((d > 9) ? d : "0" + d) + DTC +
+      ((h > 9) ? h : "0" + h) + TD + ((mn > 9) ? mn : "0" + mn) + TD + ((s > 9) ? s : "0" + s);
+  return dt;
+}
+
+function showToast(title, msg, secs) {
+   SpreadsheetApp.getActiveSpreadsheet().toast(msg, title, secs);
+}
+
+curRow = 1;
+function putLog(str) {
+  showToast("状況", str, 100);
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var nRows = sheet.getLastRow();
+  // シート行数が不足なら追加
+  if (nRows <= curRow) {
+    sheet.appendRow([""]);
+  }  
+  sheet.getRange(curRow, 1).setValue(getDateTimeStr("-", ":", " ") + " " + str);
+  curRow++;
+}
