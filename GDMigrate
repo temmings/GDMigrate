@@ -89,7 +89,7 @@ function checkGDMigrateSharedFolder(role) {
       }
       // 被共有側：自分が非オーナーかつ親フォルダのない当該フォルダあり
       if (role == 1 && curFolder.getOwner().getEmail() != NAME_CURRENT_USER) {
-        if (curFolder.getParents().length == 0) {
+        if (!curFolder.getParents().hasNext()) {
           return curFolder;
         }
       }
@@ -252,8 +252,8 @@ function copyAcl(src, dst, role) {
     return;
   }
   // 以下、被共有側の処理
-  while (viewers.hasNext()) {
-    var vr = viewers.next()
+  for (var i = 0; i < viewers.length; i++) {
+    var vr = viewers[i];
     var newid = vr.getEmail();
     if (newid != NAME_CURRENT_USER && newid != ownerOld.getEmail()) {
       try {
@@ -263,8 +263,8 @@ function copyAcl(src, dst, role) {
       }
     }
   }
-  while (editors.hasNext()) {
-    var ed = editors.next()
+  for (var i = 0; i < editors.length; i++) {
+    var ed = editors[i];
     var newid = ed.getEmail();
     if (newid != NAME_CURRENT_USER && newid != ownerOld.getEmail()) {
       try {
