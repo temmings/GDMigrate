@@ -247,8 +247,14 @@ function copyAcl(src, dst, role) {
 
   // 共有提供側の処理  
   if (role == ROLE_SHARER) {
-    dst.addViewers(viewers);
-    dst.addEditors(editors);
+    for (var i = 0; i < viewers.length; i++) {
+      var vr = viewers[i];
+      dst.addViewer(vr);
+    }
+    for (var i = 0; i < editors.length; i++) {
+      var ed = editors[i];
+      dst.addEditor(ed);
+    }
     return;
   }
   // 以下、被共有側の処理
