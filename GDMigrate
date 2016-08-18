@@ -71,24 +71,24 @@ function main() {
 // role: ROLE_SHARER = 共有提供側  ROLE_RECEIVER = 被共有側
 function checkGDMigrateSharedFolder(role) {
   var folders;
-  var root = DocsList.getRootFolder();
+  var root = DriveApp.getRootFolder();
   if (role == ROLE_SHARER) {
     folders = root.getFolders();
   } else if (role == ROLE_RECEIVER) {
-    folders = DocsList.getFolders();
+    folders = DriveApp.getFolders();
   } else {
     return null;
   }
-  for (var i = 0; i < folders.length; i++) {
-    var curFolder = folders[i];
+  while (folders.hasNext()) {
+    var curFolder = folders.next()
     // "GDMIGRATE_SHARED_FOLDER" の存在をチェック
     if (curFolder.getName() == NAME_SHARED_FOLDER) {
       // 共有側：ルート直下に自分がオーナーの当該フォルダあり
-      if (role == 0 && curFolder.getOwner() == NAME_CURRENT_USER) {
+      if (role == 0 && curFolder.getOwner().getEmail() == NAME_CURRENT_USER) {
         return curFolder;
       }
       // 被共有側：自分が非オーナーかつ親フォルダのない当該フォルダあり
-      if (role == 1 && curFolder.getOwner() != NAME_CURRENT_USER) {
+      if (role == 1 && curFolder.getOwner().getEmail() != NAME_CURRENT_USER) {
         if (curFolder.getParents().length == 0) {
           return curFolder;
         }
@@ -138,7 +138,7 @@ function showGui(role) {
 function startSharer() {
   showToast("処理を開始します", "共有用コピーの提供", 5);
   var app = UiApp.getActiveApplication();
-  var root = DocsList.getRootFolder();
+  var root = DriveApp.getRootFolder();
   // Google Drive ルート直下に GDMIGRATE_SHARED_FOLDER/ を作成
   FOLDER_SHARED_FOLDER = root.createFolder(NAME_SHARED_FOLDER);
   // 移行先アカウントを同フォルダの共同編集者として追加
@@ -152,7 +152,7 @@ function startSharer() {
 function startReceiver() {
   showToast("処理を開始します", "被共有文書の取り込み", 5);
   var app = UiApp.getActiveApplication();
-  var root = DocsList.getRootFolder();
+  var root = DriveApp.getRootFolder();
   var newFolderName = getDateTimeStr("", "", "_");
   var newFolder = root.createFolder(newFolderName);
   duplicateFiles(FOLDER_SHARED_FOLDER, newFolder, 1);
@@ -164,14 +164,14 @@ function duplicateFiles(srcFolder, dstFolder, role) {
   var cnt, retry = 2;
   // 1. 文書の処理
   var files = srcFolder.getFiles();
-  for (var i = 0; i < files.length; i++) {
+  while (files.hasNext()) {
     if (queryCancelled() == 1) {
       putLog("duplicateFiles: cancelled by user");
       return -1;
     }
-    var curFile = files[i];
+    var curFile = files.next();
     // 共有提供側なら自分がオーナーの文書のみ対象
-    if (role == ROLE_SHARER && curFile.getOwner() != NAME_CURRENT_USER) {
+    if (role == ROLE_SHARER && curFile.getOwner().getEmail() != NAME_CURRENT_USER) {
       continue;
     }
     // 以下手順に注意
@@ -186,8 +186,8 @@ function duplicateFiles(srcFolder, dstFolder, role) {
         putLog("duplicateFiles: copy ACL [" + curFile.getName() +"]");
         copyAcl(curFile, dupFile, role);
         putLog("duplicateFiles: move folder [" + curFile.getName() + "]");
-        dupFile.removeFromFolder(DocsList.getRootFolder());
-        dupFile.addToFolder(dstFolder);
+        DriveApp.getRootFolder().removeFile(dupFile)
+        dstFolder.addFile(dupFile)
         putLog("duplicateFiles: done [" + curFile.getName() + "]");
         break;
       } catch (e) {
@@ -203,12 +203,12 @@ function duplicateFiles(srcFolder, dstFolder, role) {
   }
   // 2. フォルダの処理
   var folders = srcFolder.getFolders();
-  for (var i = 0; i < folders.length; i++) {
+  while (folders.hasNext()) {
     if (queryCancelled() == 1) {
       putLog("duplicateFiles: cancelled by user");
       return -1;
     }
-    var curFolder = folders[i];
+    var curFolder = folders.next()
     // 作成した共有用フォルダ自身を対象としないように
     if (role == ROLE_SHARER && curFolder.getId() == FOLDER_SHARED_FOLDER.getId()) {
       continue;
@@ -252,10 +252,10 @@ function copyAcl(src, dst, role) {
     return;
   }
   // 以下、被共有側の処理
-  for (var i = 0; i < viewers.length; i++) {
-    var vr = viewers[i];
+  while (viewers.hasNext()) {
+    var vr = viewers.next()
     var newid = vr.getEmail();
-    if (newid != NAME_CURRENT_USER && newid != ownerOld) {
+    if (newid != NAME_CURRENT_USER && newid != ownerOld.getEmail()) {
       try {
         dst.addViewer(newid);
       } catch (e) {
@@ -263,10 +263,10 @@ function copyAcl(src, dst, role) {
       }
     }
   }
-  for (var i = 0; i < editors.length; i++) {
-    var ed = editors[i];
+  while (editors.hasNext()) {
+    var ed = editors.next()
     var newid = ed.getEmail();
-    if (newid != NAME_CURRENT_USER && newid != ownerOld) {
+    if (newid != NAME_CURRENT_USER && newid != ownerOld.getEmail()) {
       try {
         dst.addEditor(newid);
       } catch (e) {
